@@ -547,14 +547,29 @@ function getTurno() {
   if(h>=14&&h<22) return 'Turno B · 14h–22h';
   return 'Turno C · 22h–06h';
 }
-// Data da API: "dd/MM/yyyy" → "yyyy-MM-dd" para comparação
+// Data da API: aceita "dd/MM/yyyy", "yyyy-MM-dd" ou ISO "2026-04-14T07:00:00.000Z"
 function apiDateToISO(s) {
   if(!s) return '';
-  const p = String(s).split('/');
+  const str = String(s).trim();
+  // Formato ISO completo: "2026-04-14T07:00:00.000Z"
+  if(str.includes('T')) return str.substring(0,10);
+  // Formato "yyyy-MM-dd"
+  if(/^\d{4}-\d{2}-\d{2}/.test(str)) return str.substring(0,10);
+  // Formato "dd/MM/yyyy"
+  const p = str.split('/');
   if(p.length===3) return `${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
-  return String(s).substring(0,10);
+  return str.substring(0,10);
 }
-function fmtData(s) { return String(s||'—').substring(0,10); }
+function fmtData(s) {
+  if(!s) return '—';
+  const iso = apiDateToISO(String(s));
+  if(!iso) return '—';
+  // Converte "yyyy-MM-dd" → "dd/MM/yyyy"
+  const [y,m,d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+// Normaliza nome do campo: API pode retornar "insumo" ou "item"
+function nomeItem(h) { return h.item || h.insumo || ''; }
 
 function isInPeriod(dataApi, ini, fim) {
   const iso = apiDateToISO(dataApi);
@@ -616,7 +631,7 @@ async function carregarHistorico() {
   const data = await apiGet('buscarHistorico');
   if(!Array.isArray(data)) return;
   historico = data
-    .filter(h => h.item)
+    .filter(h => nomeItem(h))
     .sort((a,b) => {
       const pa = apiDateToISO(a.data), pb = apiDateToISO(b.data);
       return pb.localeCompare(pa);
@@ -656,7 +671,7 @@ async function enviarPendentes() {
 function calcSaldo(ins) {
   const nN = norm(ins.nome), rN = norm(ins.ref);
   return historico.reduce((acc,h) => {
-    if(norm(h.item)!==nN && !(rN&&rN!==''&&norm(h.ref)===rN)) return acc;
+    if(norm(nomeItem(h))!==nN && !(rN&&rN!==''&&norm(h.ref)===rN)) return acc;
     return acc + (Number(h.qtd)||0);
   }, 0);
 }
@@ -708,7 +723,7 @@ function renderReq() {
   const fim   = document.getElementById('data-req-fim')?.value||'';
   const lista = historico.filter(h =>
     h.tipo==='Requisicao' &&
-    (!busca || norm(h.item).includes(busca) || norm(h.ref).includes(busca)) &&
+    (!busca || norm(nomeItem(h)).includes(busca) || norm(h.ref).includes(busca)) &&
     isInPeriod(h.data, ini, fim)
   );
   const total = lista.reduce((s,h)=>s+Math.abs(Number(h.qtd)||0),0);
@@ -726,7 +741,7 @@ function renderExp() {
   const fim   = document.getElementById('data-exp-fim')?.value||'';
   const lista = historico.filter(h =>
     h.tipo==='Expedicao' &&
-    (!busca || norm(h.item).includes(busca) || norm(h.ref).includes(busca)) &&
+    (!busca || norm(nomeItem(h)).includes(busca) || norm(h.ref).includes(busca)) &&
     isInPeriod(h.data, ini, fim)
   );
   const total = lista.reduce((s,h)=>s+Math.abs(Number(h.qtd)||0),0);
@@ -744,7 +759,7 @@ function renderHist() {
   const fim   = document.getElementById('data-hist-fim')?.value||'';
   let lista   = historico.filter(h =>
     (filtroHist==='todos'||h.tipo===filtroHist) &&
-    (!busca || norm(h.item).includes(busca) || norm(h.ref).includes(busca)) &&
+    (!busca || norm(nomeItem(h)).includes(busca) || norm(h.ref).includes(busca)) &&
     isInPeriod(h.data, ini, fim)
   );
   renderHistList('list-hist', lista);
@@ -775,7 +790,7 @@ function renderHistList(elId, lista) {
     return `<div class="hi">
       <div class="hi-badge ${h.tipo}">${TIPO_EMOJI[h.tipo]||'📦'}</div>
       <div class="hi-info">
-        <div class="hi-nome">${h.item||'—'} <span style="color:var(--text3);font-size:10px;font-family:'DM Mono',monospace">${h.ref||''}</span></div>
+        <div class="hi-nome">${nomeItem(h)||'—'} <span style="color:var(--text3);font-size:10px;font-family:'DM Mono',monospace">${h.ref||''}</span></div>
         <div class="hi-meta">
           ${fmtData(h.data)}
           · ${TIPO_LABEL[h.tipo]||h.tipo}
@@ -810,7 +825,7 @@ function renderRel() {
 
 function renderGrupoRel(arr, elId, cor) {
   const ag={};
-  arr.forEach(h=>{ const k=h.item||'—'; ag[k]=(ag[k]||0)+Math.abs(Number(h.qtd)||0); });
+  arr.forEach(h=>{ const k=nomeItem(h)||'—'; ag[k]=(ag[k]||0)+Math.abs(Number(h.qtd)||0); });
   const sorted=Object.entries(ag).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const max=sorted[0]?.[1]||1;
   document.getElementById(elId).innerHTML = !sorted.length
@@ -946,7 +961,7 @@ async function salvarLancamento() {
 function abrirDetalhe(nome) {
   const ins=insumos.find(i=>i.nome===nome); if(!ins) return;
   const nN=norm(ins.nome), rN=norm(ins.ref);
-  const movs=historico.filter(h=>norm(h.item)===nN||(rN&&rN!==''&&norm(h.ref)===rN));
+  const movs=historico.filter(h=>norm(nomeItem(h))===nN||(rN&&rN!==''&&norm(h.ref)===rN));
   const saldo=calcSaldo(ins);
   const tEnt=movs.filter(h=>h.tipo==='Estoque').reduce((s,h)=>s+Math.abs(Number(h.qtd)||0),0);
   const tReq=movs.filter(h=>h.tipo==='Requisicao').reduce((s,h)=>s+Math.abs(Number(h.qtd)||0),0);
@@ -1042,7 +1057,7 @@ function fecharOverlay(id) { document.getElementById(id).classList.remove('open'
 // ═══════════════════════════════════════════════════════════════════════
 function exportarCSV() {
   const rows=historico.map(h=>
-    `${fmtData(h.data)},"${h.item||''}","${h.ref||''}",${h.tipo},${Number(h.qtd)||0},"${h.status||''}"`
+    `${fmtData(h.data)},"${nomeItem(h)||''}","${h.ref||''}",${h.tipo},${Number(h.qtd)||0},"${h.status||''}"`
   );
   const csv=['Data,Item,Referência,Tipo,Quantidade,Status',...rows].join('\n');
   const a=Object.assign(document.createElement('a'),{
